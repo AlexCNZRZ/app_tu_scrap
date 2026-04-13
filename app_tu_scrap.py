@@ -17,26 +17,18 @@ st.set_page_config(page_title="Zscaler Scraper PRO", layout="wide")
 
 
 def create_driver():
-    ua = UserAgent()
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
 
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument(f"user-agent={ua.random}")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-blink-features=AutomationControlled")
 
-    driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()),
-        options=chrome_options
-    )
+    options.binary_location = "/usr/bin/chromium"
 
-    # 🔥 Anti-détection JS
-    driver.execute_script("""
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
-        })
-    """)
+    driver = webdriver.Chrome(options=options)
 
     return driver
 
