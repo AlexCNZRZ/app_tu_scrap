@@ -1,69 +1,160 @@
 import streamlit as st
-import requests
-import json
+import pandas as pd
+import time
 
-st.set_page_config(page_title="Zscaler Checker (Cloud)", layout="wide")
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.firefox.options import Options
+from selenium.webdriver.firefox.service import Service
+from webdriver_manager.firefox import GeckoDriverManager
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 # ==============================
-# FUNCTION : CALL ZSCALER BACKEND
+# CONFIG
 # ==============================
-def get_zscaler_data(url):
+CSV_URL = "https://help.zscaler.com/downloads/zia/documentation-knowledgebase/policies/url-filtering/about-url-categories/ZIA-URLCategories-02-12-2025.csv"
+
+st.set_page_config(page_title="Zscaler Checker FINAL", layout="wide")
+
+# ==============================
+# LOAD CATEGORIES
+# ==============================
+@st.cache_data
+def load_categories():
+    df = pd.read_csv(CSV_URL)
+    if "Category" in df.columns:
+        return df["Category"].dropna().unique().tolist()
+    return df.iloc[:, 0].dropna().unique().tolist()
+
+categories = load_categories()
+
+# ==============================
+# SESSION STATE
+# ==============================
+if "rules" not in st.session_state:
+    st.session_state.rules = {cat: True for cat in categories}
+
+# ==============================
+# DRIVER (FIREFOX CLOUD SAFE)
+# ==============================
+def create_driver():
+    options = Options()
+    options.add_argument("--headless")
+
+    driver = webdriver.Firefox(
+        service=Service(GeckoDriverManager().install()),
+        options=options
+    )
+
+    return driver
+
+# ==============================
+# SCRAPING ZSCALER
+# ==============================
+def scrape_category(url):
+
+    driver = create_driver()
 
     try:
-        endpoint = "https://sitereview.zscaler.com/api/v1/urlinfo"
+        driver.get("https://sitereview.zscaler.com/")
+        wait = WebDriverWait(driver, 20)
 
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Content-Type": "application/json"
-        }
+        # attendre chargement
+        wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
 
-        payload = {
-            "url": url
-        }
+        # trouver input
+        input_box = wait.until(
+            EC.presence_of_element_located((By.XPATH, "//input"))
+        )
 
-        response = requests.post(endpoint, headers=headers, json=payload)
+        # injecter URL via JS (fiable)
+        driver.execute_script("""
+            arguments[0].value = arguments[1];
+            arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+        """, input_box, url)
 
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {"error": f"HTTP {response.status_code}"}
+        time.sleep(1)
+
+        # trouver bouton
+        button = wait.until(
+            EC.element_to_be_clickable((By.XPATH, "//button"))
+        )
+
+        # clic JS
+        driver.execute_script("arguments[0].click();", button)
+
+        # attendre résultat
+        time.sleep(5)
+
+        body_text = driver.find_element(By.TAG_NAME, "body").text
+
+        return body_text
 
     except Exception as e:
-        return {"error": str(e)}
+        return f"Erreur: {e}"
+
+    finally:
+        driver.quit()
 
 # ==============================
 # UI
 # ==============================
-st.title("🔍 Zscaler URL Checker (Streamlit Cloud Compatible)")
+st.title("🔐 Zscaler URL Policy Checker (FINAL Cloud Version)")
 
-url = st.text_input("Saisir une URL")
+tab1, tab2 = st.tabs(["📂 Catégories", "🔍 Tester URL"])
 
-if st.button("Analyser"):
+# ==============================
+# TAB 1
+# ==============================
+with tab1:
+    st.header("Gestion des catégories")
 
-    if not url:
-        st.warning("Veuillez entrer une URL")
-    else:
-        with st.spinner("Analyse en cours..."):
+    cols = st.columns(3)
 
-            data = get_zscaler_data(url)
+    for i, cat in enumerate(categories):
+        with cols[i % 3]:
+            val = st.toggle(cat, value=st.session_state.rules.get(cat, True))
+            st.session_state.rules[cat] = val
 
-        if "error" in data:
-            st.error(data["error"])
+# ==============================
+# TAB 2
+# ==============================
+with tab2:
+    st.header("Tester une URL")
+
+    url = st.text_input("Entrer une URL")
+
+    if st.button("Analyser"):
+
+        if not url:
+            st.warning("Veuillez entrer une URL")
         else:
-            st.success("Résultat récupéré")
+            with st.spinner("Analyse en cours..."):
 
-            # 🔍 JSON brut
-            st.subheader("📦 Réponse complète")
-            st.json(data)
+                result = scrape_category(url)
 
-            # 🎯 Extraction utile (si dispo)
-            try:
-                category = data.get("category", "Inconnue")
-                reputation = data.get("reputation", "N/A")
+            st.subheader("Résultat brut")
+            st.text_area("Réponse", result, height=300)
 
-                st.subheader("🎯 Résumé")
-                st.write(f"Catégorie : **{category}**")
-                st.write(f"Réputation : **{reputation}**")
+            # tentative extraction catégorie simple
+            detected_category = None
+
+            for cat in categories:
+                if cat.lower() in result.lower():
+                    detected_category = cat
+                    break
+
+            if detected_category:
+                st.subheader("Catégorie détectée")
+                st.write(detected_category)
+
+                if st.session_state.rules.get(detected_category, True):
+                    st.success("✅ URL AUTORISÉE")
+                else:
+                    st.error("❌ URL REFUSÉE")
+            else:
+                st.warning("Catégorie non détectée automatiquement")
 
             except:
                 st.warning("Impossible d'extraire les champs principaux")
