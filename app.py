@@ -68,7 +68,7 @@ def scrape_category(url):
         # 🎯 INPUT (CIBLAGE PRECIS)
         # ==============================
         input_box = wait.until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, "input.lookup-input"))
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "lookup-input"))
         )
 
         input_box.clear()
@@ -81,7 +81,7 @@ def scrape_category(url):
         # ==============================
         try:
             button = wait.until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button.lookup-site-button"))
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button primary lookup-site-button"))
             )
 
             # clic JS (plus fiable sur Render)
