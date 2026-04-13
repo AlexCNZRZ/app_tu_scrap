@@ -1,149 +1,184 @@
 import streamlit as st
+import pandas as pd
+import time
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
-#from fake_useragent import UserAgent
-import time
-import random
-
-st.set_page_config(page_title="Zscaler Scraper PRO", layout="wide")
+from selenium.webdriver.support import expected_conditions as EC
 
 # ==============================
-# DRIVER STEALTH
+# CONFIG
 # ==============================
+CSV_URL = "https://help.zscaler.com/downloads/zia/documentation-knowledgebase/policies/url-filtering/about-url-categories/ZIA-URLCategories-02-12-2025.csv"
 
+st.set_page_config(page_title="Zscaler Checker", layout="wide")
 
+# ==============================
+# LOAD CATEGORIES
+# ==============================
+@st.cache_data
+def load_categories():
+    df = pd.read_csv(CSV_URL)
+    if "Category" in df.columns:
+        return df["Category"].dropna().unique().tolist()
+    return df.iloc[:, 0].dropna().unique().tolist()
+
+categories = load_categories()
+
+# ==============================
+# SESSION STATE
+# ==============================
+if "rules" not in st.session_state:
+    st.session_state.rules = {cat: True for cat in categories}
+
+# ==============================
+# SELENIUM DRIVER
+# ==============================
 def create_driver():
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-blink-features=AutomationControlled")
 
+    # IMPORTANT pour Docker / VPS
     options.binary_location = "/usr/bin/chromium"
 
     driver = webdriver.Chrome(options=options)
-
     return driver
 
 # ==============================
-# SCRAPING EXPERT
+# SCRAPING + EXTRACTION
 # ==============================
+def scrape_category(url):
 
+    driver = create_driver()
 
-def scrape_zscaler(url_to_test, retries=2):
+    try:
+        driver.get("https://sitereview.zscaler.com/")
+        wait = WebDriverWait(driver, 20)
 
-    for attempt in range(retries):
+        # attendre chargement complet
+        wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
 
-        driver = create_driver()
+        # récupérer les inputs visibles
+        inputs = driver.find_elements(By.XPATH, "//input")
 
-        try:
-            driver.get("https://sitereview.zscaler.com/")
-            wait = WebDriverWait(driver, 20)
+        input_box = None
+        for inp in inputs:
+            if inp.is_displayed() and inp.is_enabled():
+                input_box = inp
+                break
 
-            # ⏳ Attendre que la page soit stable
-            wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+        if not input_box:
+            raise Exception("Champ de saisie introuvable")
 
-            time.sleep(random.uniform(2, 4))
+        # interaction réelle
+        input_box.clear()
+        input_box.send_keys(url)
+        time.sleep(1)
 
-            # 🔍 Trouver TOUS les inputs visibles
-            inputs = driver.find_elements(By.XPATH, "//input")
+        # envoi réel
+        input_box.send_keys(Keys.ENTER)
 
-            input_box = None
-            for inp in inputs:
-                if inp.is_displayed():
-                    input_box = inp
+        # attendre résultat
+        time.sleep(5)
+
+        body_text = driver.find_element(By.TAG_NAME, "body").text
+
+        # ==============================
+        # EXTRACTION CATEGORIE
+        # ==============================
+        category = None
+        lines = body_text.split("\n")
+
+        for line in lines:
+            if "Category" in line or "URL Category" in line:
+                parts = line.split(":")
+                if len(parts) > 1:
+                    category = parts[1].strip()
                     break
 
-            if not input_box:
-                raise Exception("Champ input introuvable")
-
-            # 🔥 Scroll + focus
-            driver.execute_script("arguments[0].scrollIntoView(true);", input_box)
-            driver.execute_script("arguments[0].focus();", input_box)
-
-            time.sleep(1)
-
-            # 🔥 Injection JS (ultra fiable)
-            driver.execute_script("""
-                arguments[0].value = arguments[1];
-                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
-            """, input_box, url_to_test)
-
-            time.sleep(1)
-
-            # 🔍 Trouver bouton cliquable
-            buttons = driver.find_elements(By.XPATH, "//button")
-
-            submit_button = None
-            for btn in buttons:
-                if btn.is_displayed():
-                    submit_button = btn
+        # fallback simple
+        if not category:
+            for line in lines:
+                if 3 < len(line) < 50:
+                    category = line.strip()
                     break
 
-            if not submit_button:
-                raise Exception("Bouton submit introuvable")
+        return {
+            "category": category,
+            "raw_text": body_text
+        }
 
-            # 🔥 clic JS (contourne tous les blocages)
-            driver.execute_script("arguments[0].click();", submit_button)
+    except Exception as e:
+        return {
+            "error": str(e)
+        }
 
-            # ⏳ attendre changement page (résultat)
-            time.sleep(random.uniform(4, 7))
-
-            # 🔁 attendre contenu dynamique
-            wait.until(
-                lambda d: len(d.find_element(By.TAG_NAME, "body").text) > 50
-            )
-
-            # 📄 extraction
-            full_html = driver.page_source
-            body_text = driver.find_element(By.TAG_NAME, "body").text
-
-            driver.quit()
-
-            return full_html, body_text
-
-        except Exception as e:
-            driver.quit()
-
-            if attempt < retries - 1:
-                time.sleep(2)
-                continue
-            else:
-                return None, f"Erreur finale: {e}"
+    finally:
+        driver.quit()
 
 # ==============================
-# UI STREAMLIT
+# UI
 # ==============================
+st.title("🔐 Zscaler URL Policy Checker")
 
+tab1, tab2 = st.tabs(["📂 Catégories", "🔍 Tester une URL"])
 
-st.title("🔍 Zscaler Scraper — Version Expert")
+# ==============================
+# TAB 1 : REGLES
+# ==============================
+with tab1:
+    st.header("Gestion des catégories")
 
-url = st.text_input("Saisir une URL à analyser")
+    cols = st.columns(3)
 
-if st.button("Analyser"):
+    for i, cat in enumerate(categories):
+        with cols[i % 3]:
+            val = st.toggle(cat, value=st.session_state.rules.get(cat, True))
+            st.session_state.rules[cat] = val
 
-    if not url:
-        st.warning("Veuillez entrer une URL")
-    else:
-        with st.spinner("Scraping avancé en cours..."):
+# ==============================
+# TAB 2 : TEST URL
+# ==============================
+with tab2:
+    st.header("Tester une URL")
 
-            html, text = scrape_zscaler(url)
+    url = st.text_input("Entrer une URL")
 
-        if html:
-            st.success("Scraping réussi")
+    if st.button("Analyser"):
 
-            st.subheader("📄 Texte extrait")
-            st.text_area("Texte", text, height=300)
-
-            st.subheader("🧾 HTML complet")
-            st.code(html, language="html")
-
+        if not url:
+            st.warning("Veuillez entrer une URL")
         else:
-            st.error(text)
+            with st.spinner("Analyse en cours..."):
+
+                result = scrape_category(url)
+
+            if "error" in result:
+                st.error(result["error"])
+            else:
+                st.subheader("🎯 Catégorie détectée")
+
+                if result["category"]:
+                    st.success(result["category"])
+
+                    # vérification règle
+                    if result["category"] in st.session_state.rules:
+                        if st.session_state.rules[result["category"]]:
+                            st.success("✅ URL AUTORISÉE")
+                        else:
+                            st.error("❌ URL REFUSÉE")
+                    else:
+                        st.warning("Catégorie non trouvée dans la liste")
+
+                else:
+                    st.warning("Catégorie non détectée")
+
+                # debug
+                with st.expander("🔍 Voir le texte complet"):
+                    st.text(result["raw_text"])
