@@ -156,5 +156,3 @@ with tab2:
             else:
                 st.warning("Catégorie non détectée automatiquement")
 
-            except:
-                st.warning("Impossible d'extraire les champs principaux")
