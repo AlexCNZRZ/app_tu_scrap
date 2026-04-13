@@ -61,48 +61,57 @@ def scrape_category(url):
         driver.get("https://sitereview.zscaler.com/")
         wait = WebDriverWait(driver, 20)
 
-        # attendre chargement complet
+        # attendre chargement
         wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
 
-        # récupérer les inputs visibles
-        inputs = driver.find_elements(By.XPATH, "//input")
+        # ==============================
+        # 🎯 INPUT (CIBLAGE PRECIS)
+        # ==============================
+        input_box = wait.until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "input.lookup-input"))
+        )
 
-        input_box = None
-        for inp in inputs:
-            if inp.is_displayed() and inp.is_enabled():
-                input_box = inp
-                break
-
-        if not input_box:
-            raise Exception("Champ de saisie introuvable")
-
-        # interaction réelle
         input_box.clear()
         input_box.send_keys(url)
+
         time.sleep(1)
 
-        # envoi réel
-        input_box.send_keys(Keys.ENTER)
+        # ==============================
+        # 🎯 BOUTON (CIBLAGE PRECIS)
+        # ==============================
+        try:
+            button = wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button.lookup-site-button"))
+            )
 
-        # attendre résultat
+            # clic JS (plus fiable sur Render)
+            driver.execute_script("arguments[0].click();", button)
+
+        except:
+            # fallback ENTER
+            input_box.send_keys(Keys.ENTER)
+
+        # ==============================
+        # ⏳ ATTENTE RESULTAT
+        # ==============================
         time.sleep(5)
 
         body_text = driver.find_element(By.TAG_NAME, "body").text
 
         # ==============================
-        # EXTRACTION CATEGORIE
+        # 🎯 EXTRACTION CATEGORIE
         # ==============================
         category = None
         lines = body_text.split("\n")
 
         for line in lines:
-            if "Category" in line or "URL Category" in line:
+            if "Category" in line:
                 parts = line.split(":")
                 if len(parts) > 1:
                     category = parts[1].strip()
                     break
 
-        # fallback simple
+        # fallback
         if not category:
             for line in lines:
                 if 3 < len(line) < 50:
