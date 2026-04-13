@@ -68,7 +68,7 @@ def scrape_category(url):
         # 🎯 INPUT (CIBLAGE PRECIS)
         # ==============================
         input_box = wait.until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, "lookup-input"))
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "form-input-text"))
         )
 
         input_box.clear()
